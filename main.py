@@ -1,46 +1,62 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
-from fastapi.responses import StreamingResponse
-from fastapi.responses import JSONResponse
+from flask import Flask, jsonify, abort, Response
+import logging
 import openai
 import json
-import asyncio
-from pydantic import BaseModel
-from typing import List
-import logging
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+app = Flask(__name__)
 
+def generate_response(request):
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST',
+            'Access-Control-Allow-Headers': 'Content-Type'
+        }
+        return ('', 204, headers)
 
-app = FastAPI()
+    # Set CORS headers for the main request
+    headers = {
+        'Access-Control-Allow-Origin': '*'
+    }
 
-class RequestData(BaseModel):
-    message: str
-    history: List[str]
-
-@app.post("/generate-response")
-def generate_response(request_data: RequestData):
     try:
-        logger.info(f"Request type {type(request_data)}")
-        logger.info(f"Request {request_data}")
-        data = request_data.json
-        logger.info(f"Data {data}")
-        message = data["message"]
-        history = data["history"]
-        
-        messages = history + [{"role": "user", "content": message}]
-        logger.info(f"messages {messages}")
+        request_data = request.get_json()
+
+        if not request_data or 'message' not in request_data or 'history' not in request_data:
+            return ('Bad Request: Missing fields', 400, headers)
+
+        logger.info(f"Request {request}")
+
+        logger.info(f"Request data {request_data}")
+
+        message = request_data['message']
+        history = request_data['history']
+
+
+        system_message = [{"role": "system",
+                           "content": f"""
+Act as smart lawyer bot in the Republic of Kazakhstan. You name is ZangerAI. You can use the following information if needed ``` 1 Месячный расчетный показатель (МРП) на сегодняшний день равен 3450 тенге```. 
+Don't make up facts. 
+Important! Use the same language as used in user message ```{message}```.
+If you cannot answer, then write that you cannot answer in the same language as user message"""}]
+        messages = system_message + history + [{"role": "user", "content": message}]
+
+        logger.info(f"Calling llm with {messages}")
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model="gpt-3.5-turbo-16k",
             messages=messages,
-            max_tokens=100
+            max_tokens=1500
         )
-        logger.info(f"response {response}")
-        logger.info(f"response type {type(response)}")
-        
         response_text = response.choices[0].message.content
-        return {"response": response_text}
-    
+        logger.info(f"Got the response {response_text}")
+        return (json.dumps({"answer": response_text}), 200, headers)
+
     except Exception as e:
-        logger.info(f"Error {e}")
-        return HTTPException(status_code=500, detail=str(e))
+        return (str(e), 500, headers)
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
